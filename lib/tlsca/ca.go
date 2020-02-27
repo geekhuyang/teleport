@@ -77,6 +77,8 @@ type Identity struct {
 	Principals []string
 	// KubernetesGroups is a list of Kubernetes groups allowed
 	KubernetesGroups []string
+	// KubernetesUsers is a list of Kubernetes users allowed
+	KubernetesUsers []string
 	// Expires specifies whenever the session will expire
 	Expires time.Time
 	// RouteToCluster specifies the target cluster

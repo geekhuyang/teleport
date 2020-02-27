@@ -1,5 +1,5 @@
 /*
-Copyright 2017 Gravitational, Inc.
+Copyright 2017-2020 Gravitational, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,45 +19,100 @@ package parse
 import (
 	"go/ast"
 	"go/parser"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/gravitational/trace"
 )
 
-// IsRoleVariable checks if the passed in string matches the variable pattern
+// Expression is an expression template
+// that can interpolate to some variables
+type Expression struct {
+	// name
+	namespace string
+	// variable is a variable name, e.g. trait name
+	variable string
+	// prefix is a prefix of the string
+	prefix string
+	// suffix is a suffix
+	suffix string
+}
+
+// Namespace returns a variable namespace, e.g. external or internal
+func (p *Expression) Namespace() string {
+	return p.namespace
+}
+
+// Name returns variable name
+func (p *Expression) Name() string {
+	return p.variable
+}
+
+// Interpolate interpolates the variable adding prefix and suffix if present
+func (p *Expression) Interpolate(traits map[string][]string) ([]string, bool) {
+	values, ok := traits[p.variable]
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, len(values))
+	for i := range values {
+		out[i] = p.prefix + values[i] + p.suffix
+	}
+	return out, true
+}
+
+var reVariable = regexp.MustCompile(
+	// prefix is anyting that is not { or }
+	`^(?P<prefix>[^}{]*)` +
+		// variable is antything in brackets {{}} that is not { or }
+		`{{(?P<expression>\s*[^}{]*\s*)}}` +
+		// prefix is anyting that is not { or }
+		`(?P<suffix>[^}{]*)$`,
+)
+
+// RoleVariable checks if the passed in string matches the variable pattern
 // {{external.foo}} or {{internal.bar}}. If it does, it returns the variable
 // prefix and the variable name. In the previous example this would be
 // "external" or "internal" for the variable prefix and "foo" or "bar" for the
 // variable name. If no variable pattern is found, trace.NotFound is returned.
-func IsRoleVariable(variable string) (string, string, error) {
-	// time whitespace around string if it exists
-	variable = strings.TrimSpace(variable)
-
-	// strip {{ and }} from the start and end of the variable
-	if !strings.HasPrefix(variable, "{{") || !strings.HasSuffix(variable, "}}") {
-		return "", "", trace.NotFound("no variable found: %v", variable)
+func RoleVariable(variable string) (*Expression, error) {
+	match := reVariable.FindStringSubmatch(variable)
+	if len(match) == 0 {
+		if strings.Index(variable, "{{") != -1 || strings.Index(variable, "}}") != -1 {
+			return nil, trace.BadParameter(
+				"%q is using template brackets '{{' or '}}', however expression does not parse, make sure the format is {{variable}}",
+				variable)
+		}
+		return nil, trace.NotFound("no variable found in %q", variable)
 	}
-	variable = variable[2 : len(variable)-2]
+
+	prefix, variable, suffix := match[1], match[2], match[3]
 
 	// parse and get the ast of the expression
 	expr, err := parser.ParseExpr(variable)
 	if err != nil {
-		return "", "", trace.NotFound("no variable found: %v", variable)
+		return nil, trace.NotFound("no variable found: %v", variable)
 	}
 
 	// walk the ast tree and gather the variable parts
 	variableParts, err := walk(expr)
 	if err != nil {
-		return "", "", trace.NotFound("no variable found: %v", variable)
+		return nil, trace.NotFound("no variable found: %v", variable)
 	}
 
 	// the variable must have two parts the prefix and the variable name itself
 	if len(variableParts) != 2 {
-		return "", "", trace.NotFound("no variable found: %v", variable)
+		return nil, trace.NotFound("no variable found: %v", variable)
 	}
 
-	return variableParts[0], variableParts[1], nil
+	return &Expression{
+		prefix:    strings.TrimLeftFunc(prefix, unicode.IsSpace),
+		namespace: variableParts[0],
+		variable:  variableParts[1],
+		suffix:    strings.TrimRightFunc(suffix, unicode.IsSpace),
+	}, nil
 }
 
 // walk will walk the ast tree and gather all the variable parts into a slice and return it.

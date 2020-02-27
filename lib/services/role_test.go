@@ -1128,6 +1128,8 @@ func (s *RoleSuite) TestApplyTraits(c *C) {
 		outLabels     Labels
 		inKubeGroups  []string
 		outKubeGroups []string
+		inKubeUsers   []string
+		outKubeUsers  []string
 	}
 	var tests = []struct {
 		comment  string
@@ -1177,6 +1179,26 @@ func (s *RoleSuite) TestApplyTraits(c *C) {
 			},
 		},
 		{
+			comment: "kube user interpolation in allow rule",
+			inTraits: map[string][]string{
+				"foo": []string{"bar"},
+			},
+			allow: rule{
+				inKubeUsers:  []string{`IAM#{{external.foo}};`},
+				outKubeUsers: []string{"IAM#bar;"},
+			},
+		},
+		{
+			comment: "kube users interpolation in deny rule",
+			inTraits: map[string][]string{
+				"foo": []string{"bar"},
+			},
+			deny: rule{
+				inKubeUsers:  []string{`IAM#{{external.foo}};`},
+				outKubeUsers: []string{"IAM#bar;"},
+			},
+		},
+		{
 			comment: "no variable in logins",
 			inTraits: map[string][]string{
 				"foo": []string{"bar"},
@@ -1188,13 +1210,12 @@ func (s *RoleSuite) TestApplyTraits(c *C) {
 		},
 
 		{
-			comment: "invalid variable in logins gets passed along",
+			comment: "invalid variable in logins does not get passed along",
 			inTraits: map[string][]string{
 				"foo": []string{"bar"},
 			},
 			allow: rule{
-				inLogins:  []string{`external.foo}}`},
-				outLogins: []string{`external.foo}}`},
+				inLogins: []string{`external.foo}}`},
 			},
 		},
 		{
@@ -1310,11 +1331,13 @@ func (s *RoleSuite) TestApplyTraits(c *C) {
 					Logins:     tt.allow.inLogins,
 					NodeLabels: tt.allow.inLabels,
 					KubeGroups: tt.allow.inKubeGroups,
+					KubeUsers:  tt.allow.inKubeUsers,
 				},
 				Deny: RoleConditions{
 					Logins:     tt.deny.inLogins,
 					NodeLabels: tt.deny.inLabels,
 					KubeGroups: tt.deny.inKubeGroups,
+					KubeUsers:  tt.deny.inKubeUsers,
 				},
 			},
 		}
@@ -1323,10 +1346,12 @@ func (s *RoleSuite) TestApplyTraits(c *C) {
 		c.Assert(outRole.GetLogins(Allow), DeepEquals, tt.allow.outLogins, comment)
 		c.Assert(outRole.GetNodeLabels(Allow), DeepEquals, tt.allow.outLabels, comment)
 		c.Assert(outRole.GetKubeGroups(Allow), DeepEquals, tt.allow.outKubeGroups, comment)
+		c.Assert(outRole.GetKubeUsers(Allow), DeepEquals, tt.allow.outKubeUsers, comment)
 
 		c.Assert(outRole.GetLogins(Deny), DeepEquals, tt.deny.outLogins, comment)
 		c.Assert(outRole.GetNodeLabels(Deny), DeepEquals, tt.deny.outLabels, comment)
 		c.Assert(outRole.GetKubeGroups(Deny), DeepEquals, tt.deny.outKubeGroups, comment)
+		c.Assert(outRole.GetKubeUsers(Deny), DeepEquals, tt.deny.outKubeUsers, comment)
 	}
 }
 

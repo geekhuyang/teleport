@@ -1,5 +1,5 @@
 /*
-Copyright 2017 Gravitational, Inc.
+Copyright 2017-2020 Gravitational, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -40,94 +40,130 @@ func (s *ParseSuite) TearDownSuite(c *check.C) {}
 func (s *ParseSuite) SetUpTest(c *check.C)     {}
 func (s *ParseSuite) TearDownTest(c *check.C)  {}
 
-func (s *ParseSuite) TestIsRoleVariable(c *check.C) {
+// TestRoleVariable tests variable parsing
+func (s *ParseSuite) TestRoleVariable(c *check.C) {
 	var tests = []struct {
-		inVariable        string
-		outIsNotFound     bool
-		outVariablePrefix string
-		outVariableName   string
+		title string
+		in    string
+		err   error
+		out   Expression
 	}{
-		// 0 - no curly bracket prefix
 		{
-			"external.foo}}",
-			true,
-			"",
-			"",
+			title: "no curly bracket prefix",
+			in:    "external.foo}}",
+			err:   trace.BadParameter(""),
 		},
-		// 1 - invalid syntax
 		{
-			`{{external.foo("bar")`,
-			true,
-			"",
-			"",
+			title: "invalid syntax",
+			in:    `{{external.foo("bar")`,
+			err:   trace.BadParameter(""),
 		},
-		// 2 - invalid sytnax
 		{
-			"{{internal.}}",
-			true,
-			"",
-			"",
+			title: "invalid variable syntax",
+			in:    "{{internal.}}",
+			err:   trace.BadParameter(""),
 		},
-		// 3 - invalid syntax
 		{
-			"{{external..foo}}",
-			true,
-			"",
-			"",
+			title: "invalid dot syntax",
+			in:    "{{external..foo}}",
+			err:   trace.BadParameter(""),
 		},
-		// 4 - invalid syntax
 		{
-			"{{}}",
-			true,
-			"",
-			"",
+			title: "empty variable",
+			in:    "{{}}",
+			err:   trace.BadParameter(""),
 		},
-		// 5 - invalid syntax
 		{
-			"{{internal.foo",
-			true,
-			"",
-			"",
+			title: "no curly bracket suffix",
+			in:    "{{internal.foo",
+			err:   trace.BadParameter(""),
 		},
-		// 6 - invalid syntax
 		{
-			"{{internal.foo.bar}}",
-			true,
-			"",
-			"",
+			title: "too many levels of nesting in the variable",
+			in:    "{{internal.foo.bar}}",
+			err:   trace.BadParameter(""),
 		},
-		// 7 - valid brackets
 		{
-			`{{internal["foo"]}}`,
-			false,
-			"internal",
-			"foo",
+			title: "valid with brackets",
+			in:    `{{internal["foo"]}}`,
+			out:   Expression{namespace: "internal", variable: "foo"},
 		},
-		// 8 - valid
 		{
-			"{{external.foo}}",
-			false,
-			"external",
-			"foo",
+			title: "external with no brackets",
+			in:    "{{external.foo}}",
+			out:   Expression{namespace: "external", variable: "foo"},
 		},
-		// 9 - valid
 		{
-			"{{internal.bar}}",
-			false,
-			"internal",
-			"bar",
+			title: "internal with no brackets",
+			in:    "{{internal.bar}}",
+			out:   Expression{namespace: "internal", variable: "bar"},
+		},
+		{
+			title: "internal with spaces removed",
+			in:    "  {{  internal.bar  }}  ",
+			out:   Expression{namespace: "internal", variable: "bar"},
+		},
+		{
+			title: "variable with prefix and suffix",
+			in:    "  hello,  {{  internal.bar  }}  there! ",
+			out:   Expression{prefix: "hello,  ", namespace: "internal", variable: "bar", suffix: "  there!"},
 		},
 	}
 
 	for i, tt := range tests {
-		comment := check.Commentf("Test %v", i)
+		comment := check.Commentf("Test(%v) %q", i, tt.title)
 
-		variablePrefix, variableName, err := IsRoleVariable(tt.inVariable)
-		if tt.outIsNotFound {
-			c.Assert(trace.IsNotFound(err), check.Equals, true, comment)
+		variable, err := RoleVariable(tt.in)
+		if tt.err != nil {
+			c.Assert(err, check.FitsTypeOf, tt.err, comment)
 			continue
 		}
-		c.Assert(variablePrefix, check.Equals, tt.outVariablePrefix, comment)
-		c.Assert(variableName, check.Equals, tt.outVariableName, comment)
+		c.Assert(variable, check.DeepEquals, &tt.out, comment)
+	}
+}
+
+// TestInterpolate tests variable interpolation
+func (s *ParseSuite) TestInterpolate(c *check.C) {
+	type result struct {
+		values []string
+		found  bool
+	}
+	var tests = []struct {
+		title  string
+		in     Expression
+		traits map[string][]string
+		res    result
+	}{
+		{
+			title:  "mapped traits",
+			in:     Expression{variable: "foo"},
+			traits: map[string][]string{"foo": []string{"a", "b"}, "bar": []string{"c"}},
+			res:    result{found: true, values: []string{"a", "b"}},
+		},
+		{
+			title:  "missed traits",
+			in:     Expression{variable: "baz"},
+			traits: map[string][]string{"foo": []string{"a", "b"}, "bar": []string{"c"}},
+			res:    result{found: false, values: []string{}},
+		},
+		{
+			title:  "traits with prefix and suffix",
+			in:     Expression{prefix: "IAM#", variable: "foo", suffix: ";"},
+			traits: map[string][]string{"foo": []string{"a", "b"}, "bar": []string{"c"}},
+			res:    result{found: true, values: []string{"IAM#a;", "IAM#b;"}},
+		},
+	}
+
+	for i, tt := range tests {
+		comment := check.Commentf("Test(%v) %q", i, tt.title)
+
+		values, found := tt.in.Interpolate(tt.traits)
+		if !tt.res.found {
+			c.Assert(found, check.Equals, false, comment)
+			c.Assert(values, check.HasLen, 0)
+			continue
+		}
+
+		c.Assert(values, check.DeepEquals, tt.res.values, comment)
 	}
 }
